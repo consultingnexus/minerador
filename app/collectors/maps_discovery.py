@@ -1,11 +1,12 @@
 """Coletor de descoberta no Google Maps.
 
-Diferente de google_maps.py (que enriquece UMA empresa), aqui recebemos uma
-busca (setor + região) e devolvemos uma LISTA de empresas com:
-empresa, endereco, telefone, website, url_maps, cidade, setor_busca.
+Usa a API SÍNCRONA do Playwright rodando em uma thread separada via
+asyncio.to_thread. Isso evita o NotImplementedError do asyncio.subprocess
+em Windows quando o event loop não é Proactor (uvicorn/anyio às vezes
+substitui o policy).
 """
 from __future__ import annotations
-import re
+import asyncio
 from urllib.parse import quote_plus
 
 from app.utils.logger import get_logger
@@ -13,81 +14,102 @@ from app.utils.logger import get_logger
 log = get_logger("collector.maps_discovery")
 
 
-async def collect_maps_discovery(setor: str, regiao: str, max_resultados: int = 30) -> list[dict]:
+def _scrape_sync(setor: str, regiao: str, max_resultados: int) -> list[dict]:
+    """Executa scraping síncrono — chamado de dentro de uma thread."""
     query = f"{setor} {regiao}".strip()
     url = f"https://www.google.com/maps/search/{quote_plus(query)}"
+    resultados: list[dict] = []
 
     try:
-        from playwright.async_api import async_playwright
+        from playwright.sync_api import sync_playwright
     except Exception as e:
         log.warning("playwright indisponível: %s", e)
         return []
 
-    resultados: list[dict] = []
-
     try:
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            ctx = await browser.new_context(locale="pt-BR")
-            page = await ctx.new_page()
-            await page.goto(url, timeout=30000)
-            await page.wait_for_timeout(3500)
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            ctx = browser.new_context(locale="pt-BR")
+            page = ctx.new_page()
+            page.goto(url, timeout=45000, wait_until="domcontentloaded")
+            page.wait_for_timeout(3500)
 
-            # Aceitar cookies se aparecer
-            try:
-                btn = page.locator('button:has-text("Aceitar tudo"), button:has-text("Accept all")').first
-                if await btn.count() > 0:
-                    await btn.click()
-                    await page.wait_for_timeout(1000)
-            except Exception:
-                pass
+            # Aceitar/rejeitar cookies e fechar overlays comuns
+            for sel in [
+                'button:has-text("Aceitar tudo")',
+                'button:has-text("Accept all")',
+                'button:has-text("Rejeitar tudo")',
+                'button:has-text("Reject all")',
+                'button[aria-label*="Aceitar"]',
+                'button[aria-label*="Accept"]',
+            ]:
+                try:
+                    b = page.locator(sel).first
+                    if b.count() > 0:
+                        b.click(timeout=2000)
+                        page.wait_for_timeout(800)
+                        break
+                except Exception:
+                    continue
 
             feed = page.locator('div[role="feed"]').first
             try:
-                await feed.wait_for(timeout=8000)
+                feed.wait_for(timeout=8000)
             except Exception:
                 log.warning("feed do Maps não apareceu para query=%s", query)
-                await browser.close()
+                browser.close()
                 return []
 
             # Scroll até obter ao menos max_resultados cards ou esgotar
-            seen_count = 0
             for _ in range(40):
                 cards = page.locator('div[role="feed"] a[href*="/maps/place/"]')
-                cnt = await cards.count()
+                cnt = cards.count()
                 if cnt >= max_resultados:
                     break
-                if cnt == seen_count:
-                    # tenta scroll mesmo assim algumas vezes
-                    pass
-                seen_count = cnt
                 try:
-                    await feed.evaluate("el => el.scrollBy(0, 2000)")
+                    feed.evaluate("el => el.scrollBy(0, 2000)")
                 except Exception:
                     pass
-                await page.wait_for_timeout(1200)
+                page.wait_for_timeout(1200)
 
             cards = page.locator('div[role="feed"] a[href*="/maps/place/"]')
-            total = min(await cards.count(), max_resultados)
-            log.info("maps_discovery query=%s cards=%d (limite=%d)", query, total, max_resultados)
+            total = min(cards.count(), max_resultados)
+            log.info(
+                "maps_discovery query=%s cards=%d (limite=%d)",
+                query, total, max_resultados,
+            )
 
             for i in range(total):
                 try:
                     card = cards.nth(i)
-                    await card.scroll_into_view_if_needed(timeout=3000)
-                    await card.click(timeout=5000)
-                    await page.wait_for_timeout(1800)
+                    aria_nome = (card.get_attribute("aria-label") or "").strip()
+                    card.scroll_into_view_if_needed(timeout=3000)
+                    # overlay (bzPs2e) intercepta clique real — dispara via JS
+                    card.evaluate("el => el.click()")
+                    # espera URL mudar para /maps/place/ (navegação na SPA)
+                    try:
+                        page.wait_for_url("**/maps/place/**", timeout=8000)
+                    except Exception:
+                        pass
+                    # espera o painel de detalhes carregar
+                    try:
+                        page.locator('div[role="main"] h1').first.wait_for(timeout=6000)
+                    except Exception:
+                        pass
+                    page.wait_for_timeout(800)
 
                     nome = ""
                     try:
-                        nome = (await page.locator('h1').first.inner_text(timeout=2500)).strip()
+                        nome = page.locator('div[role="main"] h1').first.inner_text(timeout=2500).strip()
                     except Exception:
                         pass
+                    # fallback: aria-label do card (já tem o nome do estabelecimento)
+                    if not nome or nome.lower() == "resultados":
+                        nome = aria_nome
 
-                    endereco = _extract_aria(page, "Endereço:") or _extract_aria(page, "Address:")
-                    telefone = _extract_aria(page, "Telefone:") or _extract_aria(page, "Phone:")
-                    website = await _extract_website(page)
-
+                    endereco = _by_data_item(page, "address") or _aria_sync(page, "Endereço") or _aria_sync(page, "Address")
+                    telefone = _by_data_item(page, "phone:tel:") or _aria_sync(page, "Telefone") or _aria_sync(page, "Phone")
+                    website = _website_sync(page)
                     url_maps = page.url
 
                     if nome:
@@ -104,40 +126,58 @@ async def collect_maps_discovery(setor: str, regiao: str, max_resultados: int = 
                     log.debug("falha card %d: %s", i, e)
                     continue
 
-            await browser.close()
+            browser.close()
     except Exception as e:
         log.warning("maps_discovery falhou query=%s: %s", query, e)
 
     return resultados
 
 
-async def _extract_aria(page, prefix: str) -> str:
-    """Lê botões com aria-label começando por 'Endereço:' / 'Telefone:' etc."""
+def _aria_sync(page, needle: str) -> str:
+    """Lê aria-label de botões cujo label contém 'needle' (case-sensitive). Retorna parte após ':'"""
     try:
-        loc = page.locator(f'button[aria-label^="{prefix}"]').first
-        if await loc.count() == 0:
+        loc = page.locator(f'button[aria-label*="{needle}"]').first
+        if loc.count() == 0:
             return ""
-        aria = await loc.get_attribute("aria-label")
-        if not aria:
-            return ""
-        return aria.split(":", 1)[1].strip()
+        aria = loc.get_attribute("aria-label") or ""
+        return aria.split(":", 1)[1].strip() if ":" in aria else aria.strip()
     except Exception:
         return ""
 
 
-async def _extract_website(page) -> str:
-    """O botão 'Site' aparece como link com data-item-id='authority' ou aria-label='Site:'."""
+def _by_data_item(page, item_id_prefix: str) -> str:
+    """Lê aria-label de botões com data-item-id começando por 'item_id_prefix' (ex.: 'address', 'phone:tel:')."""
+    try:
+        loc = page.locator(f'button[data-item-id^="{item_id_prefix}"]').first
+        if loc.count() == 0:
+            return ""
+        aria = loc.get_attribute("aria-label") or ""
+        return aria.split(":", 1)[1].strip() if ":" in aria else aria.strip()
+    except Exception:
+        return ""
+
+
+def _website_sync(page) -> str:
     try:
         loc = page.locator('a[data-item-id="authority"]').first
-        if await loc.count() > 0:
-            href = await loc.get_attribute("href")
+        if loc.count() > 0:
+            href = loc.get_attribute("href")
             if href:
                 return href
-        loc2 = page.locator('a[aria-label^="Site:"], a[aria-label^="Website:"]').first
-        if await loc2.count() > 0:
-            href = await loc2.get_attribute("href")
+        loc2 = page.locator(
+            'a[aria-label^="Site:"], a[aria-label^="Website:"]'
+        ).first
+        if loc2.count() > 0:
+            href = loc2.get_attribute("href")
             if href:
                 return href
     except Exception:
         pass
     return ""
+
+
+async def collect_maps_discovery(
+    setor: str, regiao: str, max_resultados: int = 30
+) -> list[dict]:
+    """Wrapper async — roda o scraper síncrono em uma thread separada."""
+    return await asyncio.to_thread(_scrape_sync, setor, regiao, max_resultados)
