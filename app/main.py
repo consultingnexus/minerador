@@ -1,3 +1,11 @@
+import sys
+import asyncio
+
+# Playwright no Windows exige ProactorEventLoop (suporta subprocess).
+# Precisa vir ANTES de qualquer import que possa criar um loop.
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
 from fastapi import FastAPI
 from app.api.routes import router
 from app.utils.logger import get_logger
