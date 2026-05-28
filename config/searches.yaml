@@ -1,0 +1,16 @@
+# Buscas de prospecção. Cada item vira uma query no Google Maps.
+# Edite livremente: adicione/remova entradas em "searches".
+searches:
+  - setor: clinicas
+    regiao: Itapevi
+    max_resultados: 30
+  # Exemplos adicionais (descomente para usar):
+  # - setor: pet shops
+  #   regiao: Barueri
+  #   max_resultados: 20
+  # - setor: oficinas mecanicas
+  #   regiao: Osasco
+
+export:
+  arquivo: prospeccao_{timestamp}.xlsx
+  apenas_sem_site: true

@@ -1,0 +1,21 @@
+# Runtime / dados gerados
+data/
+exports/
+logs/
+ranking_response.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# Playwright
+test-results/
+playwright-report/
