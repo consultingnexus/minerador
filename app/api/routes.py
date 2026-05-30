@@ -9,6 +9,7 @@ from app.services.companies import add_companies, import_file_bytes, list_compan
 from app.services.analyzer import analyze_companies
 from app.services.exporter import ranking_df, export_ranking_xlsx
 from app.services.prospect import run_prospect
+from app.collectors.maps_discovery import collect_maps_discovery
 from app.utils.storage import patch_row, SCORE_COLUMNS
 from app.config import SCORES_FILE, DEFAULT_COLLECTORS, EXPERIMENTAL_COLLECTORS
 
@@ -89,6 +90,31 @@ async def prospect_run():
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         filename=path.name,
     )
+
+
+@router.get("/prospect/search")
+async def prospect_search(
+    setor: str,
+    regiao: str,
+    max_resultados: int = 30,
+):
+    """Busca empresas no Google Maps por setor + região e devolve JSON.
+    Usado pelo frontend (tabela). Diferente de /prospect/run, que usa a
+    config estática e devolve um Excel."""
+    setor = (setor or "").strip()
+    regiao = (regiao or "").strip()
+    if not setor or not regiao:
+        raise HTTPException(400, "Informe 'setor' e 'regiao'.")
+    max_resultados = max(1, min(int(max_resultados), 100))
+    items = await collect_maps_discovery(
+        setor=setor, regiao=regiao, max_resultados=max_resultados
+    )
+    return {
+        "setor": setor,
+        "regiao": regiao,
+        "total": len(items),
+        "results": items,
+    }
 
 
 @router.post("/companies/feedback")
