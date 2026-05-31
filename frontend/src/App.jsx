@@ -31,6 +31,7 @@ export default function App() {
   const [setor, setSetor] = useState("clínicas");
   const [regiao, setRegiao] = useState("Itapevi");
   const [maxResultados, setMaxResultados] = useState(30);
+  const [filtroSite, setFiltroSite] = useState("todos"); // todos | com | sem
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -62,6 +63,12 @@ export default function App() {
   }
 
   const results = data?.results ?? [];
+  const temSite = (c) => Boolean((c.website || "").trim());
+  const resultsFiltrados = results.filter((c) => {
+    if (filtroSite === "com") return temSite(c);
+    if (filtroSite === "sem") return !temSite(c);
+    return true;
+  });
 
   return (
     <div className="page">
@@ -120,6 +127,19 @@ export default function App() {
           />
         </div>
 
+        <div className="field field-select">
+          <label htmlFor="filtro">Site</label>
+          <select
+            id="filtro"
+            value={filtroSite}
+            onChange={(e) => setFiltroSite(e.target.value)}
+          >
+            <option value="todos">Todos</option>
+            <option value="com">Com site</option>
+            <option value="sem">Sem site</option>
+          </select>
+        </div>
+
         <button type="submit" disabled={loading}>
           {loading ? "Buscando…" : "Pesquisar"}
         </button>
@@ -135,7 +155,9 @@ export default function App() {
 
       {data && !loading && (
         <ResultsTable
-          results={results}
+          results={resultsFiltrados}
+          total={results.length}
+          filtroSite={filtroSite}
           setor={data.setor}
           regiao={data.regiao}
         />
@@ -144,11 +166,16 @@ export default function App() {
   );
 }
 
-function ResultsTable({ results, setor, regiao }) {
+function ResultsTable({ results, total, filtroSite, setor, regiao }) {
+  const filtroLabel =
+    filtroSite === "com" ? "com site" : filtroSite === "sem" ? "sem site" : null;
+
   if (results.length === 0) {
     return (
       <div className="alert info">
-        Nenhuma empresa encontrada para “{setor}” em “{regiao}”.
+        {total > 0 && filtroLabel
+          ? `Nenhuma das ${total} empresa(s) encontradas está "${filtroLabel}". Troque o filtro de site.`
+          : `Nenhuma empresa encontrada para "${setor}" em "${regiao}".`}
       </div>
     );
   }
@@ -156,7 +183,9 @@ function ResultsTable({ results, setor, regiao }) {
   return (
     <>
       <p className="count">
-        {results.length} empresa(s) — {setor} / {regiao}
+        {results.length}
+        {filtroLabel ? ` de ${total}` : ""} empresa(s) — {setor} / {regiao}
+        {filtroLabel ? ` · filtro: ${filtroLabel}` : ""}
       </p>
       <div className="table-wrap">
         <table>

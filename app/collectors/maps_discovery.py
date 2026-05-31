@@ -95,67 +95,41 @@ def _scrape_sync(setor: str, regiao: str, max_resultados: int) -> list[dict]:
             for i, ref in enumerate(card_refs):
                 aria_nome = ref["aria_nome"]
                 href = ref["href"]
+                nome = endereco = telefone = website = ""
+                url_maps = href
                 try:
-                    card = cards.nth(i)
-                    card.scroll_into_view_if_needed(timeout=3000)
+                    if href:
+                        # Navegar direto pelo href é mais confiável do que clicar
+                        # no card: o clique às vezes NÃO trocava a URL, e o código
+                        # antigo então zerava endereço/telefone/website. Como os
+                        # hrefs já foram pré-capturados, o feed não é mais
+                        # necessário a partir daqui.
+                        page.goto(href, timeout=30000, wait_until="domcontentloaded")
 
-                    # Mudança 2: aguardar URL REALMENTE mudar (não só casar padrão).
-                    prev_url = page.url
-                    # overlay (bzPs2e) intercepta clique real — dispara via JS
-                    card.evaluate("el => el.click()")
-                    url_changed = True
-                    try:
-                        page.wait_for_function(
-                            "(prev) => location.href !== prev && location.href.includes('/maps/place/')",
-                            arg=prev_url,
-                            timeout=8000,
-                        )
-                    except Exception:
-                        url_changed = False
-
-                    # Mudança 5: fallback — se URL não mudou e temos href, navega direto.
-                    if not url_changed and href:
+                        # Espera o painel principal e a ficha de contatos montarem.
                         try:
-                            page.goto(href, timeout=20000, wait_until="domcontentloaded")
-                            url_changed = page.url != prev_url
+                            page.locator('div[role="main"] h1').first.wait_for(timeout=8000)
                         except Exception:
                             pass
+                        try:
+                            page.locator('div[role="main"] [data-item-id]').first.wait_for(timeout=5000)
+                        except Exception:
+                            page.wait_for_timeout(600)
 
-                    # Mudança 3: espera o painel de contatos (data-item-id) renderizar.
-                    # data-item-id é o que confirma que a ficha de contatos montou.
-                    try:
-                        page.locator('div[role="main"] h1').first.wait_for(timeout=6000)
-                    except Exception:
-                        pass
-                    try:
-                        page.locator('div[role="main"] [data-item-id]').first.wait_for(timeout=4000)
-                    except Exception:
-                        page.wait_for_timeout(500)
+                        try:
+                            nome = page.locator('div[role="main"] h1').first.inner_text(timeout=2500).strip()
+                        except Exception:
+                            nome = ""
 
-                    nome = ""
-                    try:
-                        nome = page.locator('div[role="main"] h1').first.inner_text(timeout=2500).strip()
-                    except Exception:
-                        pass
-                    # fallback: aria-label do card (capturado ANTES do click)
-                    if not nome or nome.lower() == "resultados":
-                        nome = aria_nome
-
-                    # Só lê detalhes se URL realmente mudou — evita contaminação
-                    # com dados da ficha anterior.
-                    if url_changed:
+                        # Lê os detalhes da ficha aberta — SEMPRE, tendo site ou não.
                         endereco = _by_data_item(page, "address") or _aria_sync(page, "Endereço") or _aria_sync(page, "Address")
                         telefone = _by_data_item(page, "phone:tel:") or _aria_sync(page, "Telefone") or _aria_sync(page, "Phone")
                         website = _website_sync(page)
-                        url_maps = page.url
-                    else:
-                        endereco = ""
-                        telefone = ""
-                        website = ""
-                        url_maps = href or page.url
+                        url_maps = page.url or href
 
-                    # Mudança 4: sempre emite se temos pelo menos o nome do card.
-                    nome = nome or aria_nome
+                    # fallback de nome: aria-label do card (capturado ANTES da navegação)
+                    if not nome or nome.lower() == "resultados":
+                        nome = aria_nome
                     if not nome:
                         continue
 
@@ -170,13 +144,13 @@ def _scrape_sync(setor: str, regiao: str, max_resultados: int) -> list[dict]:
                     })
                 except Exception as e:
                     log.debug("falha card %d: %s", i, e)
-                    # Mesmo no erro, ainda emite o que sabemos do card.
+                    # Mesmo no erro, emite o que já foi lido até aqui.
                     if aria_nome:
                         resultados.append({
                             "empresa": aria_nome,
-                            "endereco": "",
-                            "telefone": "",
-                            "website": "",
+                            "endereco": endereco,
+                            "telefone": telefone,
+                            "website": website,
                             "url_maps": href,
                             "cidade": regiao,
                             "setor_busca": setor,
