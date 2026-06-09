@@ -5,7 +5,7 @@
 //   VITE_API_BASE=http://localhost:8000
 // ou, se preferir usar o proxy do Vite, VITE_API_BASE=/api
 
-const API_BASE = import.meta.env.VITE_API_BASE
+const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 
 export async function searchProspects({ setor, regiao, maxResultados }) {
   const params = new URLSearchParams({
@@ -14,9 +14,11 @@ export async function searchProspects({ setor, regiao, maxResultados }) {
     max_resultados: String(maxResultados),
   });
 
-  // Enviando o header necessário para o Localtunnel pular a tela de aviso automaticamente
-  const resp = await fetch(`api/prospect/search?${params.toString()}`, {
-    method: "GET",
+  // Enviamos o header para o ngrok ignorar a tela de aviso e entregar o JSON direto
+  const resp = await fetch(`${API_BASE}/prospect/search?${params.toString()}`, {
+    headers: {
+      "ngrok-skip-browser-warning": "true",
+    },
   });
 
   if (!resp.ok) {
