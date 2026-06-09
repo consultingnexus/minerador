@@ -24,8 +24,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["*", "bypass-tunnel-reminder"],
 )
 
 app.include_router(router)
