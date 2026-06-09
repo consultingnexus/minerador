@@ -5,7 +5,7 @@
 //   VITE_API_BASE=http://localhost:8000
 // ou, se preferir usar o proxy do Vite, VITE_API_BASE=/api
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
+const API_BASE = import.meta.env.VITE_API_BASE
 
 export async function searchProspects({ setor, regiao, maxResultados }) {
   const params = new URLSearchParams({
@@ -14,7 +14,13 @@ export async function searchProspects({ setor, regiao, maxResultados }) {
     max_resultados: String(maxResultados),
   });
 
-  const resp = await fetch(`${API_BASE}/prospect/search?${params.toString()}`);
+  // Enviando o header necessário para o Localtunnel pular a tela de aviso automaticamente
+  const resp = await fetch(`${API_BASE}/prospect/search?${params.toString()}`, {
+    method: "GET",
+    headers: {
+      "bypass-tunnel-reminder": "true"
+    }
+  });
 
   if (!resp.ok) {
     let detail = `HTTP ${resp.status}`;

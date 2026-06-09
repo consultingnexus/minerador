@@ -2,8 +2,8 @@
 # Edite livremente: adicione/remova entradas em "searches".
 searches:
   - setor: clinicas
-    regiao: Itapevi
-    max_resultados: 30
+    regiao: barueri
+    max_resultados: 40
   # Exemplos adicionais (descomente para usar):
   # - setor: pet shops
   #   regiao: Barueri
