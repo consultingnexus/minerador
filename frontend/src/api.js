@@ -15,11 +15,8 @@ export async function searchProspects({ setor, regiao, maxResultados }) {
   });
 
   // Enviando o header necessário para o Localtunnel pular a tela de aviso automaticamente
-  const resp = await fetch(`/prospect/search?${params.toString()}`, {
+  const resp = await fetch(`api/prospect/search?${params.toString()}`, {
     method: "GET",
-    headers: {
-      "bypass-tunnel-reminder": "true"
-    }
   });
 
   if (!resp.ok) {
